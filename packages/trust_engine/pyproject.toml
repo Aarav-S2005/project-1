@@ -1,0 +1,22 @@
+[project]
+name = "trust-engine"
+version = "0.1.0"
+description = "Trust Engine providing behavioral and graph-structural feature extraction and trust decay/recovery"
+requires-python = ">=3.12"
+dependencies = [
+    "shared",
+    "decision-engine",
+    "redis>=5.0.0",
+    "scikit-learn>=1.5.0",
+    "joblib>=1.4.0",
+    "shap>=0.45.0",
+    "numpy>=1.26.0",
+]
+
+[tool.uv.sources]
+shared = { workspace = true }
+decision-engine = { workspace = true }
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"

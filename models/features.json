@@ -1,0 +1,17 @@
+{
+  "features": [
+    "req_rate_10s",
+    "req_rate_60s",
+    "rate_burst_ratio",
+    "geo_velocity_kmh",
+    "tls_fingerprint_mismatch",
+    "time_of_day_deviation",
+    "path_length",
+    "path_novelty",
+    "privilege_shortcut_score",
+    "intermediate_node_degree"
+  ],
+  "contamination": 0.05,
+  "n_estimators": 100,
+  "roc_auc": 0.9996
+}

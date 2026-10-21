@@ -1,0 +1,24 @@
+// Zero-Trust API Gateway - ReBAC Schema with Closed-Loop Narrowing
+
+definition user {}
+
+definition organization {
+    relation member: user
+}
+
+definition document {
+    relation organization: organization
+    relation owner: user
+    relation editor: user
+    relation viewer: user | organization#member
+
+    // Closed-loop restricting relation written dynamically by Decision Engine
+    relation restricted_subject: user
+
+    // Normal permissions: base permission MINUS restricting relation
+    permission edit = (owner + editor) - restricted_subject
+    permission view = (owner + editor + viewer) - restricted_subject
+
+    // Degraded / narrowed permission satisfied when restricted
+    permission narrow_view = viewer & restricted_subject
+}

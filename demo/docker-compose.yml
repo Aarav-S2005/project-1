@@ -1,0 +1,36 @@
+services:
+  demo-backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: zero_trust_demo_backend
+    restart: unless-stopped
+    ports:
+      - "4010:4010"
+      - "4011:4011"
+      - "4012:4012"
+      - "4013:4013"
+    environment:
+      - USERS_PORT=4010
+      - DOCUMENTS_PORT=4011
+      - PAYROLL_PORT=4012
+      - ADMIN_PORT=4013
+      - NODE_ENV=production
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:4010/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 5s
+
+  demo-frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: zero_trust_demo_frontend
+    restart: unless-stopped
+    ports:
+      - "4001:4001"
+    depends_on:
+      demo-backend:
+        condition: service_healthy

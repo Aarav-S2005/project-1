@@ -1,0 +1,96 @@
+:root {
+  --bg-primary: #07090e;
+  --bg-secondary: #0d121d;
+  --bg-card: #131b2a;
+  --bg-card-hover: #172235;
+  --bg-glass: rgba(19, 27, 42, 0.75);
+  
+  --border-subtle: #1e293b;
+  --border-focus: #38bdf8;
+  --border-accent: rgba(56, 189, 248, 0.3);
+
+  --text-primary: #f8fafc;
+  --text-secondary: #94a3b8;
+  --text-muted: #64748b;
+
+  --color-allow: #10b981;
+  --color-allow-bg: rgba(16, 185, 129, 0.15);
+  --color-step-up: #f59e0b;
+  --color-step-up-bg: rgba(245, 158, 11, 0.15);
+  --color-narrow: #ec4899;
+  --color-narrow-bg: rgba(236, 72, 153, 0.15);
+  --color-deny: #ef4444;
+  --color-deny-bg: rgba(239, 68, 68, 0.15);
+  --color-cyan: #06b6d4;
+  --color-cyan-glow: rgba(6, 182, 212, 0.25);
+
+  --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  --font-mono: 'JetBrains Mono', 'Fira Code', monospace;
+  
+  --radius-sm: 6px;
+  --radius-md: 10px;
+  --radius-lg: 16px;
+}
+
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  background-color: var(--bg-primary);
+  color: var(--text-primary);
+  font-family: var(--font-sans);
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+  min-height: 100vh;
+}
+
+/* Scrollbars */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: var(--bg-secondary);
+}
+::-webkit-scrollbar-thumb {
+  background: var(--border-subtle);
+  border-radius: var(--radius-sm);
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--text-muted);
+}
+
+/* Glass Card */
+.glass-panel {
+  background: var(--bg-glass);
+  backdrop-filter: blur(12px);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-lg);
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+}
+
+/* Buttons */
+button {
+  font-family: var(--font-sans);
+  cursor: pointer;
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+  border: none;
+  outline: none;
+}
+
+button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* Typography Utility */
+.font-mono {
+  font-family: var(--font-mono);
+}
+
+.glow-cyan {
+  box-shadow: 0 0 15px var(--color-cyan-glow);
+}

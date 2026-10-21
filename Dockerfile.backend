@@ -1,0 +1,22 @@
+FROM ghcr.io/astral-sh/uv:python3.12-bookworm-slim
+
+WORKDIR /app
+
+ENV UV_COMPILE_BYTECODE=1
+ENV UV_LINK_MODE=copy
+ENV PYTHONUNBUFFERED=1
+ENV PYTHONPATH="/app"
+
+# Copy project manifest and workspace definitions
+COPY pyproject.toml uv.lock ./
+COPY packages/ ./packages/
+COPY services/ ./services/
+COPY models/ ./models/
+COPY scripts/ ./scripts/
+COPY schema.zed ./
+
+# Install workspace dependencies without dev dependencies
+RUN uv sync --frozen --no-dev
+
+# Expose venv binaries to PATH
+ENV PATH="/app/.venv/bin:$PATH"

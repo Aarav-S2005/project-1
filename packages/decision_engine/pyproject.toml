@@ -1,0 +1,18 @@
+[project]
+name = "decision-engine"
+version = "0.1.0"
+description = "Decision Engine providing SpiceDB ReBAC authorization, trust bands, and closed-loop feedback"
+requires-python = ">=3.12"
+dependencies = [
+    "shared",
+    "authzed>=0.23.0",
+    "grpcio>=1.62.0",
+    "redis>=5.0.0",
+]
+
+[tool.uv.sources]
+shared = { workspace = true }
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"

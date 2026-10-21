@@ -1,0 +1,25 @@
+FROM ghcr.io/astral-sh/uv:python3.12-bookworm-slim
+
+WORKDIR /app
+
+ENV UV_COMPILE_BYTECODE=1
+ENV UV_LINK_MODE=copy
+ENV PYTHONUNBUFFERED=1
+ENV PYTHONPATH="/app"
+
+# Copy workspace specification and source code
+COPY pyproject.toml uv.lock ./
+COPY packages/ ./packages/
+COPY services/ ./services/
+COPY models/ ./models/
+COPY scripts/ ./scripts/
+COPY schema.zed ./
+
+# Install all workspace dependencies
+RUN uv sync --frozen --no-dev
+
+ENV PATH="/app/.venv/bin:$PATH"
+
+EXPOSE 3002
+
+CMD ["uvicorn", "control_plane.main:app", "--host", "0.0.0.0", "--port", "3002"]
