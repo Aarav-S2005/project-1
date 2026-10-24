@@ -35,9 +35,26 @@ def generate_traffic(
     num_benign = num_samples - num_anomalies
 
     # 1. Generate Benign Baseline Traffic (95%)
-    benign_rate_60s = rng.uniform(0.1, 2.0, size=num_benign)
-    # 10s rate closely tracks 60s rate with small noise
-    benign_rate_10s = np.clip(benign_rate_60s + rng.normal(0, 0.2, size=num_benign), 0.05, 3.5)
+    # Request-rate features are derived from request *counts* exactly as the live extractor does
+    # (rate_10s = n_10 / 10, rate_60s = n_60 / 60, ratio = rate_10s / (rate_60s + 0.1)), so the
+    # model sees the same scale online and offline.
+    #   * 80% steady-state browsing at 0.1-2.0 req/s (Poisson counts per window)
+    #   * 20% session start / page load: 1-15 requests issued within the last 1-60 s
+    n_steady = int(num_benign * 0.8)
+    n_start = num_benign - n_steady
+    steady_rate = rng.uniform(0.1, 2.0, size=n_steady)
+    steady_n60 = rng.poisson(steady_rate * 60.0)
+    steady_n10 = np.minimum(rng.poisson(steady_rate * 10.0), steady_n60)
+    start_k = rng.integers(1, 16, size=n_start)
+    start_t = rng.uniform(1.0, 60.0, size=n_start)
+    start_n10 = np.where(start_t <= 10.0, start_k, np.round(start_k * 10.0 / start_t))
+    start_n60 = start_k
+    n10 = np.concatenate([steady_n10, start_n10]).astype(float)
+    n60 = np.maximum(np.concatenate([steady_n60, start_n60]).astype(float), n10)
+    order = rng.permutation(num_benign)
+    n10, n60 = n10[order], n60[order]
+    benign_rate_10s = n10 / 10.0
+    benign_rate_60s = n60 / 60.0
     benign_burst_ratio = benign_rate_10s / (benign_rate_60s + 0.1)
 
     # Geo-velocity: static or small local jitter (0 to 15 km/h)
@@ -79,9 +96,16 @@ def generate_traffic(
     # Partition anomalies across 4 realistic attack vectors
     quarters = num_anomalies // 4
 
-    # Attack Type 1: High rate burst / credential stuffing attack
-    x_anomaly[:quarters, 0] = rng.uniform(15.0, 45.0, size=quarters)  # req_rate_10s
-    x_anomaly[:quarters, 2] = rng.uniform(5.0, 15.0, size=quarters)  # burst ratio
+    # Attack Type 1: High-rate burst / credential stuffing: 30-400 requests issued within the last
+    # 0.5-10 s on top of the session's background traffic, expressed through the same count-based
+    # window definitions as the live extractor (so short bursts are represented faithfully).
+    burst_n = rng.integers(30, 401, size=quarters).astype(float)
+    background = rng.poisson(rng.uniform(0.0, 1.0, size=quarters) * 50.0).astype(float)
+    burst_n10 = burst_n
+    burst_n60 = burst_n + background
+    x_anomaly[:quarters, 0] = burst_n10 / 10.0  # req_rate_10s
+    x_anomaly[:quarters, 1] = burst_n60 / 60.0  # req_rate_60s
+    x_anomaly[:quarters, 2] = (burst_n10 / 10.0) / (burst_n60 / 60.0 + 0.1)  # burst ratio
 
     # Attack Type 2: Impossible travel / intercontinental geo-velocity jump
     x_anomaly[quarters : 2 * quarters, 3] = rng.uniform(800.0, 2500.0, size=quarters)
