@@ -157,7 +157,7 @@ async def get_user_request_history(subject_id: str, limit: int = 50) -> list[dic
 
 @router.post("/{subject_id}/reset-trust", response_model=dict[str, str])
 async def reset_user_trust(subject_id: str) -> dict[str, str]:
-    """Manually restore a user's trust score back to 1.0 in Redis and append MongoDB reset record."""
+    """Restore a user's trust score to 1.0 in Redis and append a MongoDB reset record."""
     settings = get_settings()
     db = get_database()
     audit_col = db["audit_logs"]
@@ -272,11 +272,7 @@ async def set_user_trust(subject_id: str, payload: SetUserTrustPayload) -> dict[
     except Exception as exc:
         logger.error("Failed to set user trust score in Redis: %s", exc)
 
-    decision = (
-        "allow"
-        if payload.score >= 0.85
-        else ("deny" if payload.score < 0.40 else "step_up")
-    )
+    decision = "allow" if payload.score >= 0.85 else ("deny" if payload.score < 0.40 else "step_up")
     await audit_col.insert_one(
         {
             "request_id": f"override_{uuid4().hex[:8]}",
@@ -373,7 +369,9 @@ async def reset_all_trust_and_audit(payload: ResetAllPayload | None = None) -> d
                     "trust_score_before": payload.target_score,
                     "trust_score_after": payload.target_score,
                     "decision": decision,
-                    "decision_reason": f"System reset: trust score restored to {payload.target_score:.2f}",
+                    "decision_reason": (
+                        f"System reset: trust score restored to {payload.target_score:.2f}"
+                    ),
                     "features": {},
                     "shap_attributions": {},
                     "latency_ms": 0.0,
@@ -389,5 +387,7 @@ async def reset_all_trust_and_audit(payload: ResetAllPayload | None = None) -> d
         "status": "reset",
         "cleared_audit_records": cleared_count,
         "target_score": payload.target_score,
-        "message": f"Audit logs cleared and all users restored to trust score {payload.target_score:.2f}.",
+        "message": (
+            f"Audit logs cleared and all users restored to trust score {payload.target_score:.2f}."
+        ),
     }

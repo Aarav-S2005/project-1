@@ -15,7 +15,6 @@ from decision_engine.service import DecisionEngineService
 from fastapi import FastAPI, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
-
 from shared.config import get_settings
 from shared.errors import GatewayError
 from shared.logging import configure_logging
@@ -179,7 +178,6 @@ async def proxy_gateway(request: Request, path: str) -> Response:
 
     # 1. Match route
     matched = router.match(path=path, method=request.method)
-
 
     # 2. Evaluate Zero-Trust pipeline (Trust scoring, ReBAC check, Closed loop, Audit)
     pipe = get_pipeline()

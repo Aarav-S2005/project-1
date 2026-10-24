@@ -22,4 +22,7 @@ ENV PATH="/app/.venv/bin:$PATH"
 
 EXPOSE 3003
 
-CMD ["uvicorn", "data_plane.main:app", "--host", "0.0.0.0", "--port", "3003"]
+# Model inference is CPU-bound: raise DATA_PLANE_WORKERS on hosts with spare cores (on a 2-vCPU host
+# shared with Redis/SpiceDB, one worker measured best).
+ENV DATA_PLANE_WORKERS=1
+CMD ["sh", "-c", "uvicorn data_plane.main:app --host 0.0.0.0 --port 3003 --workers ${DATA_PLANE_WORKERS}"]

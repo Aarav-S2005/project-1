@@ -71,10 +71,14 @@ class ProxyEngine:
         candidate_urls = [target_url]
         if "localhost" in target_url or "127.0.0.1" in target_url:
             candidate_urls.append(
-                target_url.replace("localhost", "host.docker.internal").replace("127.0.0.1", "host.docker.internal")
+                target_url.replace("localhost", "host.docker.internal").replace(
+                    "127.0.0.1", "host.docker.internal"
+                )
             )
             candidate_urls.append(
-                target_url.replace("localhost", "zero_trust_demo_backend").replace("127.0.0.1", "zero_trust_demo_backend")
+                target_url.replace("localhost", "zero_trust_demo_backend").replace(
+                    "127.0.0.1", "zero_trust_demo_backend"
+                )
             )
 
         last_connect_err: Exception | None = None
@@ -111,7 +115,9 @@ class ProxyEngine:
 
             except httpx.ConnectError as exc:
                 last_connect_err = exc
-                logger.debug("Failed to connect to %s, trying next candidate if available...", current_url)
+                logger.debug(
+                    "Failed to connect to %s, trying next candidate if available...", current_url
+                )
                 continue
 
             except httpx.TimeoutException as exc:
@@ -141,4 +147,3 @@ class ProxyEngine:
             status_code=502,
             details={"target_url": target_url, "error": str(last_connect_err)},
         )
-

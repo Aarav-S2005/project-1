@@ -69,7 +69,6 @@ def extract_session_id(request: Request, client_ip: str, subject_id: str) -> str
     return f"sess_{safe_sub}_{digest}"
 
 
-
 def extract_resource_id(request: Request, route: RouteConfig) -> str:
     """Extract SpiceDB resource ID from headers, query, or path according to route configuration."""
     header_val = request.headers.get("x-resource-id")

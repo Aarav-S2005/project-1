@@ -84,7 +84,11 @@ def test_extract_helpers() -> None:
         "path": "/api/test",
         "headers": [(b"x-session-id", b"custom_session_123")],
     }
-    assert extract_session_id(FastAPIRequest(scope_sess), "127.0.0.1") == "custom_session_123"
+    # Session keys are always bound to the subject to prevent cross-user contamination
+    assert (
+        extract_session_id(FastAPIRequest(scope_sess), "127.0.0.1", "user:alice")
+        == "user_alice_custom_session_123"
+    )
 
     scope_no_sess = {
         "type": "http",
@@ -92,8 +96,8 @@ def test_extract_helpers() -> None:
         "path": "/api/test",
         "headers": [(b"user-agent", b"TestAgent")],
     }
-    derived = extract_session_id(FastAPIRequest(scope_no_sess), "127.0.0.1")
-    assert derived.startswith("sess_")
+    derived = extract_session_id(FastAPIRequest(scope_no_sess), "127.0.0.1", "user:alice")
+    assert derived.startswith("sess_user_alice_")
 
     # 3. Resource ID extraction
     route = RouteConfig(
