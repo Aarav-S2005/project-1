@@ -1,5 +1,6 @@
 """Closed-loop policy feedback manager writing temporary restrictions to SpiceDB and Redis."""
 
+import asyncio
 import logging
 from datetime import UTC, datetime, timedelta
 
@@ -55,7 +56,9 @@ class ClosedLoopManager:
         expires_at = now + timedelta(seconds=ttl)
 
         # 1. Closed-loop feedback: write restricting relation into SpiceDB graph
-        self.spicedb_client.write_relationship(
+        #    (blocking gRPC call is run in a worker thread so it does not stall the event loop)
+        zedtoken = await asyncio.to_thread(
+            self.spicedb_client.write_relationship,
             resource_type=resource_type,
             resource_id=resource_id,
             relation="restricted_subject",
@@ -73,6 +76,10 @@ class ClosedLoopManager:
 
         pipe = self.redis_client.pipeline()
         pipe.set(key, relation_tuple, ex=ttl)
+        if isinstance(zedtoken, str) and zedtoken:
+            # Consistency token of the write: later checks use it so the restriction is
+            # visible immediately (at_least_as_fresh) on every data-plane worker.
+            pipe.set(f"{key}:zedtoken", zedtoken, ex=ttl)
         pipe.zadd(ACTIVE_NARROW_ZSET, {member: expires_at.timestamp()})
         await pipe.execute()
 
@@ -99,7 +106,8 @@ class ClosedLoopManager:
         subject_id: str,
     ) -> bool:
         """Manually or proactively remove restricting relation from SpiceDB and Redis."""
-        self.spicedb_client.delete_relationship(
+        await asyncio.to_thread(
+            self.spicedb_client.delete_relationship,
             resource_type=resource_type,
             resource_id=resource_id,
             relation="restricted_subject",
@@ -112,6 +120,7 @@ class ClosedLoopManager:
 
         pipe = self.redis_client.pipeline()
         pipe.delete(key)
+        pipe.delete(f"{key}:zedtoken")
         pipe.zrem(ACTIVE_NARROW_ZSET, member)
         await pipe.execute()
 
@@ -136,6 +145,20 @@ class ClosedLoopManager:
         exists = await self.redis_client.exists(key)
         return bool(exists)
 
+    async def get_restriction_token(
+        self,
+        resource_type: str,
+        resource_id: str,
+        subject_type: str,
+        subject_id: str,
+    ) -> str | None:
+        """Return the ZedToken of an active restriction write, if any."""
+        key = self._format_key(resource_type, resource_id, subject_type, subject_id)
+        raw = await self.redis_client.get(f"{key}:zedtoken")
+        if raw is None:
+            return None
+        return raw.decode("utf-8") if isinstance(raw, bytes) else str(raw)
+
     async def sweep_expired_restrictions(self, current_time: datetime | None = None) -> int:
         """Find expired narrowing entries and delete their restriction from SpiceDB."""
         now = current_time or datetime.now(UTC)
@@ -158,7 +181,8 @@ class ClosedLoopManager:
             if len(parts) == 4:
                 resource_type, resource_id, subject_type, subject_id = parts
                 try:
-                    self.spicedb_client.delete_relationship(
+                    await asyncio.to_thread(
+                        self.spicedb_client.delete_relationship,
                         resource_type=resource_type,
                         resource_id=resource_id,
                         relation="restricted_subject",

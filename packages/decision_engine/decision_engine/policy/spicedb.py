@@ -8,6 +8,7 @@ from authzed.api.v1 import (
     CheckPermissionRequest,
     CheckPermissionResponse,
     Client,
+    Consistency,
     DeleteRelationshipsRequest,
     ExpandPermissionTreeRequest,
     InsecureClient,
@@ -21,6 +22,7 @@ from authzed.api.v1 import (
     SubjectReference,
     WriteRelationshipsRequest,
     WriteSchemaRequest,
+    ZedToken,
 )
 from shared.config import get_settings
 from shared.errors import PolicyDeniedError
@@ -97,15 +99,27 @@ class SpiceDBClient:
         permission: str,
         subject_type: str,
         subject_id: str,
+        at_least_as_fresh: str | None = None,
     ) -> bool:
-        """Evaluate whether a subject has a specific permission on a resource."""
+        """Evaluate whether a subject has a specific permission on a resource.
+
+        When ``at_least_as_fresh`` carries a ZedToken (e.g. the token returned by a closed-loop
+        restriction write), the check is evaluated on a snapshot at least as fresh as that write,
+        so the restriction is visible immediately instead of after SpiceDB's quantization window.
+        """
         try:
+            consistency = (
+                Consistency(at_least_as_fresh=ZedToken(token=at_least_as_fresh))
+                if at_least_as_fresh
+                else None
+            )
             req = CheckPermissionRequest(
                 resource=ObjectReference(object_type=resource_type, object_id=resource_id),
                 permission=permission,
                 subject=SubjectReference(
                     object=ObjectReference(object_type=subject_type, object_id=subject_id)
                 ),
+                consistency=consistency,
             )
             resp: CheckPermissionResponse = self._client.CheckPermission(req)
             is_allowed = (
@@ -137,8 +151,8 @@ class SpiceDBClient:
         relation: str,
         subject_type: str,
         subject_id: str,
-    ) -> None:
-        """Insert or touch a relationship tuple in SpiceDB."""
+    ) -> str | None:
+        """Insert or touch a relationship tuple in SpiceDB and return the write's ZedToken."""
         try:
             rel = Relationship(
                 resource=ObjectReference(object_type=resource_type, object_id=resource_id),
@@ -155,7 +169,7 @@ class SpiceDBClient:
                     )
                 ]
             )
-            self._client.WriteRelationships(req)
+            resp = self._client.WriteRelationships(req)
             logger.info(
                 "Wrote SpiceDB relationship: %s:%s#%s@%s:%s",
                 resource_type,
@@ -164,6 +178,9 @@ class SpiceDBClient:
                 subject_type,
                 subject_id,
             )
+            written_at = getattr(resp, "written_at", None)
+            token = getattr(written_at, "token", None)
+            return token if isinstance(token, str) and token else None
         except grpc.RpcError as exc:
             err_msg = _get_error_details(exc)
             logger.error("SpiceDB WriteRelationship failed: %s", err_msg)

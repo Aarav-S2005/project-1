@@ -135,3 +135,30 @@ def test_error_translation_on_grpc_failure(mock_authzed_client: MagicMock) -> No
             subject_type="user",
             subject_id="alice",
         )
+
+
+def test_write_returns_zedtoken_and_check_uses_it(mock_authzed_client: MagicMock) -> None:
+    """Closed-loop writes return a ZedToken that later checks pass as at_least_as_fresh."""
+    from authzed.api.v1 import WriteRelationshipsResponse, ZedToken
+
+    mock_authzed_client.WriteRelationships.return_value = WriteRelationshipsResponse(
+        written_at=ZedToken(token="tok-123")
+    )
+    mock_authzed_client.CheckPermission.return_value = CheckPermissionResponse(
+        permissionship=CheckPermissionResponse.Permissionship.PERMISSIONSHIP_NO_PERMISSION
+    )
+    client = SpiceDBClient(client=mock_authzed_client)
+
+    token = client.write_relationship("document", "d1", "restricted_subject", "user", "u1")
+    assert token == "tok-123"
+
+    allowed = client.check_permission(
+        "document", "d1", "view", "user", "u1", at_least_as_fresh=token
+    )
+    assert allowed is False
+    req = mock_authzed_client.CheckPermission.call_args[0][0]
+    assert req.consistency.at_least_as_fresh.token == "tok-123"
+
+    client.check_permission("document", "d1", "view", "user", "u1")
+    req = mock_authzed_client.CheckPermission.call_args[0][0]
+    assert not req.HasField("consistency")

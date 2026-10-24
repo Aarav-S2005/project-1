@@ -1,5 +1,6 @@
 """Unified Decision Engine service coordinating ReBAC, score bands, and closed-loop feedback."""
 
+import asyncio
 import logging
 
 import redis.asyncio as redis
@@ -57,13 +58,17 @@ class DecisionEngineService:
         res_type, res_id = parse_entity(request.resource)
         sub_type, sub_id = parse_entity(request.subject)
 
-        # 1. Base ReBAC check in SpiceDB
-        rebac_allowed = self.spicedb_client.check_permission(
+        # 1. Base ReBAC check in SpiceDB. If a closed-loop restriction is active for this
+        #    subject/resource, evaluate at least as fresh as its write so it applies immediately.
+        freshness = await self.closed_loop.get_restriction_token(res_type, res_id, sub_type, sub_id)
+        rebac_allowed = await asyncio.to_thread(
+            self.spicedb_client.check_permission,
             resource_type=res_type,
             resource_id=res_id,
             permission=request.permission,
             subject_type=sub_type,
             subject_id=sub_id,
+            at_least_as_fresh=freshness,
         )
 
         # 2. Check runtime parameter overrides from Redis
