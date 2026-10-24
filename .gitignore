@@ -91,3 +91,6 @@ lerna-debug.log*
 # OS specific
 .DS_Store
 Thumbs.db
+
+personal_docs/
+changes/
