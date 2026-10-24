@@ -1,5 +1,6 @@
 """Graph-structural feature extractor deriving traversal metrics from SpiceDB and Redis."""
 
+import asyncio
 import hashlib
 import logging
 
@@ -33,7 +34,8 @@ class GraphFeatureExtractor:
             sub_parts = subject.split(":", 1)
             s_type = sub_parts[0] if len(sub_parts) > 1 else "user"
             s_id = sub_parts[1] if len(sub_parts) > 1 else subject
-            has_permission = self.spicedb.check_permission(
+            has_permission = await asyncio.to_thread(
+                self.spicedb.check_permission,
                 resource_type=res_type,
                 resource_id=res_id,
                 permission=permission,
@@ -51,7 +53,9 @@ class GraphFeatureExtractor:
         else:
             # Query SpiceDB tree expansion
             try:
-                tree_data = self.spicedb.expand_permission_tree(res_type, res_id, permission)
+                tree_data = await asyncio.to_thread(
+                    self.spicedb.expand_permission_tree, res_type, res_id, permission
+                )
                 path_length = 2.0 if tree_data.get("has_tree") else 2.0
             except Exception:
                 path_length = 2.0 if has_permission else 1.0
@@ -69,7 +73,7 @@ class GraphFeatureExtractor:
             await self.redis.sadd(seen_paths_key, path_hash)
             await self.redis.expire(seen_paths_key, 86400 * 30)  # 30 days retention
         else:
-            # Novel graph traversal edge/path without pre-authorized relationship! Anomaly flag = 1.0
+            # Novel traversal without a pre-authorized relationship: anomaly flag = 1.0
             path_novelty = 1.0
 
         # 3. Privilege Shortcut Score
@@ -90,4 +94,3 @@ class GraphFeatureExtractor:
             privilege_shortcut_score=privilege_shortcut_score,
             intermediate_node_degree=intermediate_node_degree,
         )
-

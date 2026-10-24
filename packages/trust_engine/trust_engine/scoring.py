@@ -1,5 +1,6 @@
 """Stateful trust scoring using Isolation Forest, SHAP attributions, and Redis decay state."""
 
+import asyncio
 import logging
 import math
 from datetime import datetime
@@ -44,8 +45,24 @@ class TrustScorer:
 
         logger.info("Loading Isolation Forest model from %s", m_path)
         self.model = joblib.load(m_path)
+        # Single-sample inference: joblib parallelism only adds dispatch overhead per request.
+        if hasattr(self.model, "set_params"):
+            self.model.set_params(n_jobs=1)
         logger.info("Loading SHAP TreeExplainer from %s", e_path)
         self.explainer = joblib.load(e_path)
+        # TreeSHAP decomposes the forest's expected path length E[h(x)] exactly
+        # (sum of SHAP values + expected value), so the Isolation Forest score can be recovered
+        # from the attribution pass instead of traversing all trees a second time:
+        #   score_samples(x) = -2 ** (-E[h(x)] / c(max_samples)),  decision = score - offset_
+        self._c_norm: float | None = None
+        try:
+            from sklearn.ensemble._iforest import _average_path_length
+
+            self._c_norm = float(_average_path_length([self.model._max_samples])[0])
+            self._expected_value = float(np.ravel(self.explainer.expected_value)[0])
+        except Exception as exc:  # pragma: no cover - fallback for unexpected model types
+            logger.warning("Falling back to score_samples for inference: %s", exc)
+            self._c_norm = None
 
     async def score_features(
         self,
@@ -58,10 +75,12 @@ class TrustScorer:
         now_ts = current_time.timestamp()
         x_sample = np.array([feature_vector.to_array()])
 
-        # 1. Isolation Forest Inference
-        pred = int(self.model.predict(x_sample)[0])  # 1 = inlier, -1 = anomaly
-        decision_val = float(self.model.decision_function(x_sample)[0])  # negative = outlier
-        is_anomaly = pred == -1
+        # 1. Isolation Forest inference + 2. local SHAP attribution, computed in a worker thread so
+        #    the CPU-bound work does not block the event loop. The anomaly decision is derived from
+        #    the TreeSHAP pass (see __init__), replacing the earlier predict() + decision_function()
+        #    pair that traversed all trees twice; predict(x) = -1 exactly when decision < 0.
+        decision_val, shap_arr = await asyncio.to_thread(self._infer, x_sample)
+        is_anomaly = decision_val < 0.0
 
         # Anomaly severity normalized to [0.0, 1.0]
         if is_anomaly:
@@ -70,9 +89,6 @@ class TrustScorer:
         else:
             anomaly_severity = 0.0
 
-        # 2. Local SHAP Attribution
-        shap_raw = self.explainer.shap_values(x_sample)
-        shap_arr = np.asarray(shap_raw).flatten()
         shap_attributions: dict[str, float] = {
             name: round(float(val), 4) for name, val in zip(FEATURE_NAMES, shap_arr)
         }
@@ -143,6 +159,16 @@ class TrustScorer:
             feature_vector=feature_vector,
             shap_attributions=shap_attributions,
         )
+
+    def _infer(self, x_sample: np.ndarray) -> tuple[float, np.ndarray]:
+        """Return the Isolation Forest decision value and SHAP attribution for one sample."""
+        shap_arr = np.asarray(self.explainer.shap_values(x_sample)).flatten()
+        if self._c_norm:
+            expected_depth = float(shap_arr.sum()) + self._expected_value
+            score = -(2.0 ** (-expected_depth / self._c_norm))
+        else:
+            score = float(self.model.score_samples(x_sample)[0])
+        return score - float(self.model.offset_), shap_arr
 
     async def reset_session_trust(self, session_id: str, new_score: float = 1.0) -> None:
         """Reset session trust score back to baseline following step-up verification."""

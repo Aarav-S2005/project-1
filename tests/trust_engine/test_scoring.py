@@ -198,3 +198,18 @@ async def test_trust_engine_service_coordinator(fake_redis: redis.Redis) -> None
     assert result.subject_id == "user:eve"
     assert result.current_score >= 0.9
     assert result.feature_vector.graph.path_length == 3.0
+
+
+def test_single_pass_inference_matches_sklearn(trust_scorer: TrustScorer) -> None:
+    """score_samples - offset_ reproduces decision_function and predict exactly."""
+    import numpy as np
+
+    from scripts.generate_synthetic_traffic import generate_traffic
+
+    x_data, _, _ = generate_traffic(num_samples=400, anomaly_fraction=0.1, random_seed=7)
+    model = trust_scorer.model
+    for row in x_data:
+        x = row.reshape(1, -1)
+        decision, _ = trust_scorer._infer(x)
+        assert np.isclose(decision, model.decision_function(x)[0])
+        assert (decision < 0) == (model.predict(x)[0] == -1)
