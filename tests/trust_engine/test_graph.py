@@ -22,12 +22,12 @@ def mock_spicedb() -> MagicMock:
 
 @pytest.mark.asyncio
 async def test_path_novelty_detection(fake_redis: redis.Redis, mock_spicedb: MagicMock) -> None:
-    """Verify that a newly observed relation path is flagged novel, then cached."""
+    """An unseen path that ReBAC does not authorize is novel; authorized paths are cached."""
     extractor = GraphFeatureExtractor(spicedb_client=mock_spicedb, redis_client=fake_redis)
-
     traversal_path = ["user:alice", "organization:eng#member", "document:doc_1#viewer"]
 
-    # First request: path has never been traversed by alice -> path_novelty = 1.0
+    # Unauthorized and never seen -> novel
+    mock_spicedb.check_permission.return_value = False
     feat1 = await extractor.extract(
         subject="user:alice",
         resource="document:doc_1",
@@ -37,7 +37,8 @@ async def test_path_novelty_detection(fake_redis: redis.Redis, mock_spicedb: Mag
     assert feat1.path_novelty == 1.0
     assert feat1.path_length == 3.0
 
-    # Second request: exact same path -> path_novelty = 0.0
+    # Authorized -> routine path, remembered in seen_paths
+    mock_spicedb.check_permission.return_value = True
     feat2 = await extractor.extract(
         subject="user:alice",
         resource="document:doc_1",
@@ -46,13 +47,23 @@ async def test_path_novelty_detection(fake_redis: redis.Redis, mock_spicedb: Mag
     )
     assert feat2.path_novelty == 0.0
 
+    # Previously seen path stays non-novel even if a later check fails
+    mock_spicedb.check_permission.return_value = False
+    feat3 = await extractor.extract(
+        subject="user:alice",
+        resource="document:doc_1",
+        permission="view",
+        traversal_path=traversal_path,
+    )
+    assert feat3.path_novelty == 0.0
+
 
 @pytest.mark.asyncio
 async def test_privilege_shortcut_score(fake_redis: redis.Redis, mock_spicedb: MagicMock) -> None:
-    """Verify direct privileged owner shortcuts receive higher anomaly risk scores."""
+    """Paths not backed by a relationship receive the high shortcut score and low degree."""
     extractor = GraphFeatureExtractor(spicedb_client=mock_spicedb, redis_client=fake_redis)
 
-    # 1. Standard organizational delegation path (low shortcut risk)
+    mock_spicedb.check_permission.return_value = True
     feat_normal = await extractor.extract(
         subject="user:alice",
         resource="document:doc_1",
@@ -62,12 +73,30 @@ async def test_privilege_shortcut_score(fake_redis: redis.Redis, mock_spicedb: M
     assert feat_normal.privilege_shortcut_score == 0.1
     assert feat_normal.intermediate_node_degree == 5.0
 
-    # 2. Direct single-hop owner grant on sensitive document (suspicious shortcut)
-    feat_direct_owner = await extractor.extract(
+    mock_spicedb.check_permission.return_value = False
+    feat_direct = await extractor.extract(
         subject="user:bob",
         resource="document:doc_finance",
         permission="edit",
         traversal_path=["document:doc_finance#owner"],
     )
-    assert feat_direct_owner.privilege_shortcut_score == 0.85
-    assert feat_direct_owner.path_length == 1.0
+    assert feat_direct.privilege_shortcut_score == 0.85
+    assert feat_direct.intermediate_node_degree == 1.0
+    assert feat_direct.path_length == 1.0
+
+
+@pytest.mark.asyncio
+async def test_active_restriction_is_not_graph_anomalous(
+    fake_redis: redis.Redis, mock_spicedb: MagicMock
+) -> None:
+    """A denial caused by the gateway's own closed-loop restriction must not look anomalous."""
+    extractor = GraphFeatureExtractor(spicedb_client=mock_spicedb, redis_client=fake_redis)
+    mock_spicedb.check_permission.return_value = False
+    await fake_redis.set("narrow:document:doc_2:user:carol", "tuple", ex=60)
+
+    feat = await extractor.extract(
+        subject="user:carol", resource="document:doc_2", permission="view"
+    )
+    assert feat.path_novelty == 0.0
+    assert feat.privilege_shortcut_score == 0.1
+    assert feat.intermediate_node_degree == 5.0

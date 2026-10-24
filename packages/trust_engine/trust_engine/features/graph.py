@@ -46,6 +46,17 @@ class GraphFeatureExtractor:
             logger.debug("SpiceDB check_permission in graph extractor: %s", exc)
             has_permission = False
 
+        # A denial caused by the gateway's own closed-loop restriction is not evidence of a
+        # suspicious graph traversal. Treat restricted-but-related paths as authorized for feature
+        # purposes so quarantine does not feed back into further trust penalties (lock-out).
+        if not has_permission:
+            narrow_key = f"narrow:{res_type}:{res_id}:{s_type}:{s_id}"
+            try:
+                if await self.redis.exists(narrow_key):
+                    has_permission = True
+            except Exception as exc:
+                logger.debug("Redis narrow lookup in graph extractor: %s", exc)
+
         # 1. Path Length: derive hop count from traversal path or SpiceDB tree expansion
         if traversal_path and len(traversal_path) > 0:
             path_length = float(len(traversal_path))
