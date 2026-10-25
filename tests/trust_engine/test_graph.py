@@ -100,3 +100,25 @@ async def test_active_restriction_is_not_graph_anomalous(
     assert feat.path_novelty == 0.0
     assert feat.privilege_shortcut_score == 0.1
     assert feat.intermediate_node_degree == 5.0
+
+
+@pytest.mark.asyncio
+async def test_supplied_rebac_result_skips_spicedb(
+    fake_redis: redis.Redis, mock_spicedb: MagicMock
+) -> None:
+    """When the pipeline supplies the ReBAC result, the extractor makes no SpiceDB calls."""
+    extractor = GraphFeatureExtractor(spicedb_client=mock_spicedb, redis_client=fake_redis)
+    feat = await extractor.extract(
+        subject="user:alice", resource="document:doc_9", permission="view", has_permission=True
+    )
+    assert feat.path_novelty == 0.0
+    assert feat.path_length == 2.0
+    mock_spicedb.check_permission.assert_not_called()
+    mock_spicedb.expand_permission_tree.assert_not_called()
+
+    denied = await extractor.extract(
+        subject="user:alice", resource="document:doc_10", permission="view", has_permission=False
+    )
+    assert denied.path_novelty == 1.0
+    assert denied.privilege_shortcut_score == 0.85
+    mock_spicedb.check_permission.assert_not_called()

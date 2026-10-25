@@ -348,3 +348,40 @@ async def test_full_http_gateway_pipeline_interception() -> None:
         assert resp_deny.status_code == 403
         assert resp_deny.json()["action"] == "deny"
         assert resp_deny.headers.get("X-Trust-Decision") == "deny"
+
+
+@pytest.mark.asyncio
+async def test_pipeline_shares_one_rebac_check() -> None:
+    """One ReBAC check per request feeds both the trust engine and the decision engine."""
+    mock_trust = MagicMock(spec=TrustEngineService)
+
+    async def trust_eval(**kwargs):
+        assert await kwargs["rebac_allowed"] is True
+        return _dummy_trust_result(0.95)
+
+    mock_trust.evaluate = AsyncMock(side_effect=trust_eval)
+    mock_decision = MagicMock(spec=DecisionEngineService)
+    mock_decision.check_rebac = AsyncMock(return_value=True)
+    mock_decision.evaluate = AsyncMock(
+        return_value=DecisionResult(
+            decision=DecisionAction.ALLOW,
+            decision_reason="trust_nominal",
+            rebac_allowed=True,
+            trust_score=0.95,
+            trust_result=_dummy_trust_result(0.95),
+        )
+    )
+    mock_audit = MagicMock(spec=AuditService)
+    pipeline = ZeroTrustPipeline(
+        trust_engine=mock_trust, decision_engine=mock_decision, audit_service=mock_audit
+    )
+    route = RouteConfig(id="r1", upstream_id="u1", path_prefix="/api/documents", auth_required=True)
+    scope = {
+        "type": "http",
+        "method": "GET",
+        "path": "/api/documents/doc_1",
+        "headers": [(b"x-subject", b"user:alice")],
+    }
+    await pipeline.evaluate_request(FastAPIRequest(scope), route)
+    mock_decision.check_rebac.assert_awaited_once_with("user:alice", "document:doc_1", "view")
+    assert mock_decision.evaluate.await_args.kwargs["rebac_allowed"] is True

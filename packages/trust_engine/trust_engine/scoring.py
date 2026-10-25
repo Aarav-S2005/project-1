@@ -79,7 +79,13 @@ class TrustScorer:
         #    the CPU-bound work does not block the event loop. The anomaly decision is derived from
         #    the TreeSHAP pass (see __init__), replacing the earlier predict() + decision_function()
         #    pair that traversed all trees twice; predict(x) = -1 exactly when decision < 0.
-        decision_val, shap_arr = await asyncio.to_thread(self._infer, x_sample)
+        #    Session state and runtime parameters are read from Redis in a single round trip that
+        #    overlaps with inference.
+        trust_key = f"session:{session_id}:trust"
+        (decision_val, shap_arr), (state, runtime_params) = await asyncio.gather(
+            asyncio.to_thread(self._infer, x_sample),
+            self._read_state(trust_key),
+        )
         is_anomaly = decision_val < 0.0
 
         # Anomaly severity normalized to [0.0, 1.0]
@@ -94,8 +100,6 @@ class TrustScorer:
         }
 
         # 3. Stateful Decay & Recovery in Redis
-        trust_key = f"session:{session_id}:trust"
-        state = await self.redis.hgetall(trust_key)
 
         if state and b"current_score" in state and b"last_updated_ts" in state:
             prev_score = float(state[b"current_score"])
@@ -112,7 +116,6 @@ class TrustScorer:
         half_life = self.half_life
         anomaly_weight = self.anomaly_weight
         try:
-            runtime_params = await self.redis.hgetall("trust:runtime_parameters")
             if runtime_params:
                 if b"half_life_seconds" in runtime_params:
                     half_life = float(runtime_params[b"half_life_seconds"])
@@ -137,7 +140,8 @@ class TrustScorer:
         score_delta = current_score - prev_score
 
         # Save updated state to Redis
-        await self.redis.hset(
+        pipe = self.redis.pipeline(transaction=False)
+        pipe.hset(
             trust_key,
             mapping={
                 "current_score": str(current_score),
@@ -146,7 +150,8 @@ class TrustScorer:
                 "request_count": str(req_count + 1),
             },
         )
-        await self.redis.expire(trust_key, 86400)  # 24 hours session retention
+        pipe.expire(trust_key, 86400)  # 24 hours session retention
+        await pipe.execute()
 
         return TrustScoreResult(
             session_id=session_id,
@@ -159,6 +164,18 @@ class TrustScorer:
             feature_vector=feature_vector,
             shap_attributions=shap_attributions,
         )
+
+    async def _read_state(self, trust_key: str) -> tuple[dict[bytes, bytes], dict[bytes, bytes]]:
+        """Read session trust state and runtime parameter overrides in one Redis round trip."""
+        pipe = self.redis.pipeline(transaction=False)
+        pipe.hgetall(trust_key)
+        pipe.hgetall("trust:runtime_parameters")
+        try:
+            state, params = await pipe.execute()
+        except Exception as exc:
+            logger.debug("Could not read trust state from Redis: %s", exc)
+            return {}, {}
+        return state or {}, params or {}
 
     def _infer(self, x_sample: np.ndarray) -> tuple[float, np.ndarray]:
         """Return the Isolation Forest decision value and SHAP attribution for one sample."""

@@ -1,5 +1,6 @@
 """Zero-Trust middleware evaluation pipeline for the Data Plane proxy."""
 
+import asyncio
 import hashlib
 import logging
 import time
@@ -141,12 +142,25 @@ class ZeroTrustPipeline:
             path=request.url.path,
         )
 
-        # 1. Trust Engine evaluation (Behavioral + Graph features + Anomaly scoring + Redis decay)
-        trust_result = await self.trust_engine.evaluate(
-            telemetry=telemetry,
-            resource=resource,
-            permission=permission,
+        # 0. One ReBAC check per request, shared by the graph feature extractor and the decision
+        #    engine (previously each issued its own CheckPermission). It runs concurrently with
+        #    behavioral feature extraction.
+        rebac_task = asyncio.create_task(
+            self.decision_engine.check_rebac(subject_id, resource, permission)
         )
+
+        # 1. Trust Engine evaluation (Behavioral + Graph features + Anomaly scoring + Redis decay)
+        try:
+            trust_result = await self.trust_engine.evaluate(
+                telemetry=telemetry,
+                resource=resource,
+                permission=permission,
+                rebac_allowed=rebac_task,
+            )
+        except BaseException:
+            rebac_task.cancel()
+            raise
+        rebac_allowed = await rebac_task
 
         # 2. Decision Engine evaluation (SpiceDB ReBAC + Trust score bands + Closed-loop narrowing)
         eval_request = EvaluationRequest(
@@ -160,6 +174,7 @@ class ZeroTrustPipeline:
         decision_result = await self.decision_engine.evaluate(
             request=eval_request,
             trust_result=trust_result,
+            rebac_allowed=rebac_allowed,
         )
 
         # 3. Offload audit record asynchronously without blocking proxy latency

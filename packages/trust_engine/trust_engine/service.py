@@ -1,10 +1,13 @@
 """Unified Trust Engine service combining feature extraction, scoring, and decay."""
 
+import asyncio
+import inspect
 import logging
+from collections.abc import Awaitable
 
 import redis.asyncio as redis
 from decision_engine.policy.spicedb import SpiceDBClient
-from shared.schemas.trust import FeatureVector, RequestTelemetry, TrustScoreResult
+from shared.schemas.trust import FeatureVector, GraphFeatures, RequestTelemetry, TrustScoreResult
 
 from trust_engine.features.behavioral import BehavioralFeatureExtractor
 from trust_engine.features.graph import GraphFeatureExtractor
@@ -39,17 +42,29 @@ class TrustEngineService:
         resource: str,
         permission: str,
         traversal_path: list[str] | None = None,
+        rebac_allowed: bool | Awaitable[bool] | None = None,
     ) -> TrustScoreResult:
-        """Extract dual-stream features, run Isolation Forest + SHAP, and update trust score."""
-        # Extract behavioral stream
-        behavioral_feats = await self.behavioral_extractor.extract(telemetry)
+        """Extract dual-stream features, run Isolation Forest + SHAP, and update trust score.
 
-        # Extract graph stream
-        graph_feats = await self.graph_extractor.extract(
-            subject=telemetry.subject_id,
-            resource=resource,
-            permission=permission,
-            traversal_path=traversal_path,
+        ``rebac_allowed`` lets the caller share a ReBAC check it performs anyway (a bool, or an
+        awaitable still in flight). When omitted, the graph extractor performs its own check.
+        """
+
+        async def graph_stream() -> GraphFeatures:
+            has_permission = rebac_allowed
+            if inspect.isawaitable(has_permission):
+                has_permission = await has_permission
+            return await self.graph_extractor.extract(
+                subject=telemetry.subject_id,
+                resource=resource,
+                permission=permission,
+                traversal_path=traversal_path,
+                has_permission=has_permission,
+            )
+
+        # The behavioral and graph streams are independent, so they are extracted concurrently.
+        behavioral_feats, graph_feats = await asyncio.gather(
+            self.behavioral_extractor.extract(telemetry), graph_stream()
         )
 
         # Combine into canonical 10-dimensional feature vector

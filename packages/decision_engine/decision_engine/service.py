@@ -51,25 +51,22 @@ class DecisionEngineService:
         self,
         request: EvaluationRequest,
         trust_result: TrustScoreResult,
+        rebac_allowed: bool | None = None,
     ) -> DecisionResult:
         """Evaluate access authorization for an incoming request against trust score
         and ReBAC graph.
+
+        ``rebac_allowed`` may carry the result of :meth:`check_rebac` already performed for this
+        request (the data-plane pipeline shares one check with the trust engine).
         """
         res_type, res_id = parse_entity(request.resource)
         sub_type, sub_id = parse_entity(request.subject)
 
-        # 1. Base ReBAC check in SpiceDB. If a closed-loop restriction is active for this
-        #    subject/resource, evaluate at least as fresh as its write so it applies immediately.
-        freshness = await self.closed_loop.get_restriction_token(res_type, res_id, sub_type, sub_id)
-        rebac_allowed = await asyncio.to_thread(
-            self.spicedb_client.check_permission,
-            resource_type=res_type,
-            resource_id=res_id,
-            permission=request.permission,
-            subject_type=sub_type,
-            subject_id=sub_id,
-            at_least_as_fresh=freshness,
-        )
+        # 1. Base ReBAC check in SpiceDB.
+        if rebac_allowed is None:
+            rebac_allowed = await self.check_rebac(
+                request.subject, request.resource, request.permission
+            )
 
         # 2. Check runtime parameter overrides from Redis
         narrow_th = None
@@ -113,4 +110,25 @@ class DecisionEngineService:
             trust_score=trust_result.current_score,
             trust_result=trust_result,
             closed_loop_action=closed_loop_action,
+        )
+
+    async def check_rebac(self, subject: str, resource: str, permission: str) -> bool:
+        """Run the SpiceDB CheckPermission for a request.
+
+        If a closed-loop restriction is active for this subject/resource, the check is evaluated at
+        least as fresh as the restriction's write so that it applies immediately.
+        """
+        res_type, res_id = parse_entity(resource)
+        sub_type, sub_id = parse_entity(subject)
+        freshness = await self.closed_loop.get_restriction_token(res_type, res_id, sub_type, sub_id)
+        return bool(
+            await asyncio.to_thread(
+                self.spicedb_client.check_permission,
+                resource_type=res_type,
+                resource_id=res_id,
+                permission=permission,
+                subject_type=sub_type,
+                subject_id=sub_id,
+                at_least_as_fresh=freshness,
+            )
         )
